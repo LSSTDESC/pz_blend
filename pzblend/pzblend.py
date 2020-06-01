@@ -933,8 +933,8 @@ class PhotozBlend(object):
         for s, name in enumerate(names):
             ax = fig.add_subplot(grid[s])
             method_to_call = getattr(self, f'plot_{name}')
-            method_to_call(fig=fig, ax=ax, num_truth=None, num_coadd=None, truth_pick=None,
-                           pz_type=None, force_refresh=force_refresh, verbose=verbose, use_latest=use_latest)
+            method_to_call(fig=fig, ax=ax, num_truth=num_truth, num_coadd=num_coadd, truth_pick=truth_pick,
+                           pz_type=pz_type, force_refresh=force_refresh, verbose=verbose, use_latest=use_latest)
         
         if hasattr(self, 'num_truth'):  
             if suptitle is None: # the loop above has already supplied (self.num_truth, self.num_coadd, self.truth_pick)
