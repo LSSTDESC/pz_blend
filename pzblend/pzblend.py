@@ -555,19 +555,19 @@ class PhotozBlend(object):
             if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The PIT values remained unchanged since no update was needed.')
               
     def KS(self):
-        assert self.PITS is not None, "you must create pit_array first, try running pit_hist()"
+        assert self.PITS is not None, "you must create pit_array first, try running calc_pit()"
         pits = np.array(self.PITS)
         ks_result = skgof.ks_test(pits, stats.uniform())
         return ks_result.statistic, ks_result.pvalue
 
     def CvM(self):
-        assert self.PITS is not None, "you must create pit_array first, try running pit_hist()"
+        assert self.PITS is not None, "you must create pit_array first, try running calc_pit()"
         pits = np.array(self.PITS)
         cvm_result = skgof.cvm_test(pits, stats.uniform())
         return cvm_result.statistic, cvm_result.pvalue
 
     def AD(self, vmin=.005, vmax=.995):
-        assert self.PITS is not None, "you must create pit_array first, try running pit_hist()"
+        assert self.PITS is not None, "you must create pit_array first, try running calc_pit()"
         pits = np.array(self.PITS)
         mask = (pits>vmin) & (pits<vmax)
         print("now with proper uniform range")
