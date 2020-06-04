@@ -20,6 +20,7 @@ import bz2
 import gzip
 import joblib
 import random
+import skgof
 random.seed(1915)
 np.random.seed(1915)
 
@@ -553,6 +554,26 @@ class PhotozBlend(object):
         else:
             if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The PIT values remained unchanged since no update was needed.')
               
+    def KS(self):
+        assert self.PITS is not None, "you must create pit_array first, try running calc_pits()"
+        pits = np.array(self.PITS)
+        ks_result = skgof.ks_test(pits, stats.uniform())
+        return ks_result.statistic, ks_result.pvalue
+
+    def CvM(self):
+        assert self.PITS is not None, "you must create pit_array first, try running calc_pits()"
+        pits = np.array(self.PITS)
+        cvm_result = skgof.cvm_test(pits, stats.uniform())
+        return cvm_result.statistic, cvm_result.pvalue
+
+    def AD(self, vmin=.005, vmax=.995):
+        assert self.PITS is not None, "you must create pit_array first, try running calc_pits()"
+        pits = np.array(self.PITS)
+        mask = (pits>vmin) & (pits<vmax)
+        print("now with proper uniform range")
+        delv = vmax-vmin
+        ad_result = skgof.ad_test(pits[mask], stats.uniform(loc=vmin,scale=delv))
+        return ad_result.statistic, ad_result.pvalue
 
     def apply_function_truth(self, _group, nth=None, sortby=None, query=None):
         truth = self.truth_df.iloc[_group['row_index']]
