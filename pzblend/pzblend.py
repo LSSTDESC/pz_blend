@@ -1011,7 +1011,7 @@ class PhotozBlend(object):
             area_tot = (self.stacked_pz_density*widths).sum()
 
             # - check if the normalization was successful
-            np.testing.assert_equal(round(area_tot, ndigits=5), 1.0)
+            np.testing.assert_equal(round(area_tot, ndigits=4), 1.0)
         
         ax.plot(self.zgrid, self.stacked_pz_density, label='Stacked p(z)', alpha=0.6)
         bin_edges_optimized = np.histogram_bin_edges(self.true_z, bins='auto')
