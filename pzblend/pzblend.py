@@ -8,19 +8,23 @@ from matplotlib import pylab as plt
 from matplotlib import patches
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 import FoFCatalogMatching
+import multiprocessing
 from dask_ml.model_selection import RandomizedSearchCV
 from dask.callbacks import Callback
 import dask
+import dask.dataframe as dd
 import scipy.stats as stats
 from sklearn.neighbors import KernelDensity
-from collections import defaultdict
+from collections import defaultdict, ChainMap
 import inspect
-import pickle  
+import pickle
 import bz2
 import gzip
 import joblib
 import random
 import skgof
+from . import util
+
 random.seed(1915)
 np.random.seed(1915)
 
@@ -29,6 +33,7 @@ dask.config.set(scheduler='multiprocessing')
 plt.style.use('seaborn-poster')
 logging.basicConfig()
 logging.getLogger().setLevel(logging.INFO)
+checkmark = '\x1b[0;32m'+u'\N{check mark}'+'\x1b[1;32m'
 
 # tqdm automatically switches to the text-based
 # progress bar if not running in Jupyter
@@ -56,74 +61,13 @@ except:                        # terminal
         def tqdm(iterable, **tqdm_kwargs):
             return iterable
 
-# view larger number of dataframes rows and columns: 
-pd.set_option('display.max_columns', 30)
-pd.set_option('display.max_rows', 25)
-pd.set_option('display.min_rows', 15)
+# - view larger number of dataframes rows and columns: 
 pd.set_option('display.expand_frame_repr', True)
+pd.set_option('display.max_columns', 30)
+# pd.set_option('display.max_rows', 25)
+# pd.set_option('display.min_rows', 15)
 
 
-# ------------------------
-# utilitiy functions
-# ------------------------
-    
-def usedir(mydir,verbose=True):
-    # see: https://stackoverflow.com/questions/12468022/python-fileexists-error-when-making-directory
-    if not mydir.endswith('/'): mydir += '/' # important
-    try:
-        if not os.path.exists(os.path.dirname(mydir)):
-            os.makedirs(os.path.dirname(mydir)) 
-            # sometimes b/w the line above and this line another
-            # process may have already made this directory and it
-            # leads to [Errno 17]                
-            if verbose: logging.info(f' Made directory: {mydir}')
-    except OSError as err:
-        pass
-
-def drop_trailing_zeros(number):
-    """ drop trailing zeros from decimal """
-    if number == 0:
-        return 0
-    else:
-        return number.rstrip('0').rstrip('.') if '.' in number else number
-
-def suffixed_format(number, jump=3, precision=2, suffixes=['k', 'M', 'G', 'T', 'P','E','Z','Y','y','z','a','f','p','n','\u03BC','m']):
-    """
-    < Formatting long numbers as short strings in python >
-    Does not work for negative numbers! TODO if needed later.
-    precision: applies to floats that don't merely have trailing zeros after the decimal
-    suffixes: should be symmetric with even elements
-
-    https://en.wikipedia.org/wiki/Metric_prefix
-
-    Usage:
-    
-    suffixed_format([[10000.200,43.90008],[67543546,0.005]])
-
-    array([['10k', '43.9'],
-       ['67.54M', '5m']], dtype='<U7')
-
-    Note: k is scientifically correct not K
-    """
-    thresh_exponent = jump*len(suffixes)/2
-    suffixes = [''] + suffixes # for cases b/w 10^-jump and 10^jump
-    if isinstance(number, (list, np.ndarray)):
-        number = np.array(number)
-        number_shape = number.shape
-        number = number.flatten()
-        if any( _n!=0 and (_n<10**(-thresh_exponent) or _n>=10**(thresh_exponent+1)) for _n in number):
-            raise ValueError(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: At least one number is either too small or too big in the provided data array/list.')
-        mth = np.log10(number+(number==0)) // jump
-        mth = ( (number<=10**(-jump)) | (number>=10**jump) )*mth.astype(int)
-        return np.array([f"{drop_trailing_zeros(f'{_number/10.**(jump*_mth):.{precision}f}')}{suffixes[_mth]}"
-                         for _number, _mth in zip(number,mth)]).reshape(number_shape)
-    else:
-        if number!=0 and (number<10**(-thresh_exponent) or number>=10**(thresh_exponent+1)):
-            raise ValueError(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The number {number} is either too small or too big.')
-        mth = np.log10(number+(number==0)) // jump
-        mth = ( (number<=10**(-jump)) | (number>=10**jump) )*mth.astype(int)
-        return f"{drop_trailing_zeros(f'{number/10.**(jump*mth):.{precision}f}')}{suffixes[mth]}"
-    
 # ------------------------
 # main class object
 # ------------------------
@@ -131,8 +75,8 @@ def suffixed_format(number, jump=3, precision=2, suffixes=['k', 'M', 'G', 'T', '
 class PhotozBlend(object):
 
     def __init__(self, truth_df=None, coadd_df=None, zgrid=None):
-        self.truth_df = truth_df
-        self.coadd_df = coadd_df
+        self.truth_df = truth_df.reset_index(drop=True) if truth_df is not None else truth_df # reset just in case
+        self.coadd_df = coadd_df.reset_index(drop=True) if coadd_df is not None else coadd_df # reset just in case
         self.zgrid = zgrid
         self.bandwidth = None
         self.bandwidth_tuple = None
@@ -145,7 +89,7 @@ class PhotozBlend(object):
         self.refresh_pdf=True
         self.refresh_true_z_kernel=True
         self.refresh_pit=True
-            
+
     # --------------------------
     # analysis functions
     # --------------------------
@@ -184,6 +128,8 @@ class PhotozBlend(object):
         
         excluded = ['_plot_fof'] # not interesting
         
+        # with pd.option_context('display.max_colwidth', 220): 
+
         param_df = pd.DataFrame([])
         pd.set_option('display.max_rows', 45)
         pd.set_option('display.min_rows', 45)
@@ -200,7 +146,6 @@ class PhotozBlend(object):
             param_df = param_df.append(row)
         
         return param_df
-    
     
     # https://stackoverflow.com/questions/18474791/decreasing-the-size-of-cpickle-objects
     # "The file size of the bzip2 is almost 40x smaller, gzip is 20x smaller.
@@ -237,7 +182,6 @@ class PhotozBlend(object):
             raise ValueError('Illegal compression.')
         logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The class object has been reloaded from '{fpath+'.'+str(compression or '')}'")
         return classobj
-            
             
     # - for the simpler kde_sklearn() version similar to this see: https://jakevdp.github.io/blog/2013/12/01/kernel-density-estimation/
     def kde_dask(self, data, data_grid, bandwidth='scott', kernel='gaussian', cv=None, n_jobs=None, n_iter=None, leave=False, verbose=True, **kernel_kwargs):
@@ -283,7 +227,8 @@ class PhotozBlend(object):
                 if isinstance(bandwidth, (str, tuple)):
                     bw_method=bandwidth if isinstance(bandwidth, str) else 'scott'
                     bandwidth_guess = self.get_ballpark_estimate_bandwidth(data, bw_method=bw_method)
-                    if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Estimated the bandwidth of the kernel using the {bw_method} method to be {bandwidth_guess:.3f}.')
+                    if verbose:
+                        logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Estimated the bandwidth of the kernel using the {bw_method} method to be {bandwidth_guess:.3f}.')
                 if isinstance(bandwidth, (list, tuple, np.ndarray)):
                     if isinstance(bandwidth, tuple) and len(bandwidth)!=3:
                         raise ValueError(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The bandwidth tuple has an illegal length of {len(bandwidth)}. It must be 3.')
@@ -307,19 +252,21 @@ class PhotozBlend(object):
                         # create a model and search the parameter space
                         kde_model = KernelDensity(kernel=kernel, **kernel_kwargs)
                         param_space = {'bandwidth': bandwidth_candidates} # exploring around the guess point
-                        if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Searching for an optimal bandwidth among {nbw} candidates ranging from {min(bandwidth_candidates):.3f} to {max(bandwidth_candidates):.3f}.')                                             
+                        if verbose:
+                            logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Searching for an optimal bandwidth among {nbw} candidates ranging from {min(bandwidth_candidates):.3f} to {max(bandwidth_candidates):.3f}.')                                             
                         search = RandomizedSearchCV(kde_model, param_space, n_jobs=n_jobs,
                                                     refit=True, **search_params) # cv=LeaveOneOut() takes so long
                         with DaskProgressBar(desc='KDE cross-validation', position=0, leave=leave): 
                             with joblib.parallel_backend('threading'):
-                                # the `with` line above is not necessary but the following `fit` otherwise hangs for some setups
+                                # the `with` line above didn't seem to be necessary but the following `fit` otherwise hangs for some setups
                                 # https://github.com/scikit-learn/scikit-learn/issues/5115
                                 search.fit(data[:, None]);
                         bandwidth_best = search.best_params_['bandwidth']
                         # - sklearn: "Due to the high number of test sets (which is the same as the number of samples)
                         #   LeaveOneOut() cross validation (cv) method can be very costly. For large datasets
                         #   one should favor KFold, StratifiedKFold or ShuffleSplit."
-                        if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Optimal bandwidth of the kernel: {bandwidth_best:.3f}')
+                        if verbose:
+                            logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Optimal bandwidth of the kernel: {bandwidth_best:.3f}')
                         if bandwidth_best>bandwidth_guess:
                             if (bandwidth_best-bandwidth_guess)/(bw_high-bandwidth_guess)>0.9:
                                 logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The optimal bandwidth={bandwidth_best:.3f} is very close to the higher end of the search interval. Increase your range and try again.')
@@ -347,9 +294,9 @@ class PhotozBlend(object):
             self.refresh_true_z_kernel = False
             return data_smooth
         else:
-            if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The kde-estimated true-z density funcion remained unchanged since no update was needed.')
+            if verbose:
+                logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The kde-estimated true-z density funcion remained unchanged since no update was needed.')
             return self.true_z_hist_smooth # returns the saved value from out previous calculation
-
 
     def apply_truth_cuts(self, truth_cuts):
         # - cuts should be a list of strings
@@ -429,7 +376,7 @@ class PhotozBlend(object):
 
             if save_cached: 
                 # pickle fof_results to be used later if needed
-                usedir(self.fof_cache_filename.rsplit('/',1)[0])
+                util.usedir(self.fof_cache_filename.rsplit('/',1)[0])
                 self.fof_results.to_pickle(self.fof_cache_filename)
                 if verbose: 
                     logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The results of FoF catalog matching is cached in '{self.fof_cache_filename}'\n"+
@@ -522,11 +469,13 @@ class PhotozBlend(object):
             self.refresh_true_z_kernel=True
             self.refresh_pit=True
             
-            if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: New redshift dataframes have been created.')
+            if verbose:
+                logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: New redshift dataframes have been created.')
 
         else:
             self.refresh_z=False
-            if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The redshift dataframes remained unchanged since no update was needed.')
+            if verbose:
+                logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The redshift dataframes remained unchanged since no update was needed.')
             # the other three refreshes will remain unchanged
             # they can only be False if later they get called and update their results
 
@@ -537,10 +486,11 @@ class PhotozBlend(object):
             bottom = np.trapz(self.stacked_pz, x=self.zgrid)
             self.pzmean = top/bottom
             self.refresh_pdf = False
-            if verbose: logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: New stacked photoz's have been created.")
+            if verbose:
+                logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: New stacked photoz's have been created.")
         else:
-            if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The stacked photoz remained unchanged since no update was needed.')
-
+            if verbose:
+                logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The stacked photoz remained unchanged since no update was needed.')
 
     def calc_pits(self,leave=False,verbose=True,force_refresh=False):
         if self.refresh_pit or force_refresh or not hasattr(self,'PITS'):
@@ -550,10 +500,12 @@ class PhotozBlend(object):
                 pit = self.fastCalcPIT(self.zgrid,pzpdf,zt)
                 self.PITS.append(pit)
             self.refresh_pit = False
-            if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: New PIT values have been created.')
+            if verbose:
+                logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: New PIT values have been created.')
         else:
-            if verbose: logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The PIT values remained unchanged since no update was needed.')
-              
+            if verbose:
+                logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The PIT values remained unchanged since no update was needed.')
+ 
     def KS(self):
         assert self.PITS is not None, "you must create pit_array first, try running calc_pits()"
         pits = np.array(self.PITS)
@@ -575,33 +527,235 @@ class PhotozBlend(object):
         ad_result = skgof.ad_test(pits[mask], stats.uniform(loc=vmin,scale=delv))
         return ad_result.statistic, ad_result.pvalue
 
-    def apply_function_truth(self, _group, nth=None, sortby=None, query=None):
-        truth = self.truth_df.iloc[_group['row_index']]
-        if sortby is not None:
-            truth = truth.sort_values(**sortby)
-        if nth is not None:
-            truth = truth.iloc[nth]
-        return eval(query)
-    
-    def get_truth(self, num_truth=2, num_coadd=1, sortby=None, nth=None, query=None):
-        group_mask = np.in1d(self.fof_results['group_id'], np.flatnonzero((self.n_truth_arr == num_truth) & (self.n_coadd_arr == num_coadd)))
-        res = self.fof_results[group_mask & self.truth_mask].groupby('group_id').apply(self.apply_function_truth, sortby=sortby, nth=nth, query=query)
-        return res
+    def filter(self, cat=None, num_truth=2, num_coadd=1, where=None, apply=None, get=None,
+               return_df=None, leave=False, cols=None, inplace=None, dask_scheduler='threads',
+               dask_workers=2*multiprocessing.cpu_count(), dask_npartitions=None, verbose=True):
 
+        if cat not in ['truth','coadd']:
+            raise ValueError("The first argument, `cat`, should be either 'truth' or 'coadd'.")
 
-    def apply_function_coadd(self, _group, nth=None, sortby=None, query=None):
-        coadd = self.coadd_df.iloc[_group['row_index']]
-        if sortby is not None:
-            coadd = coadd.sort_values(**sortby)
-        if nth is not None:
-            coadd = coadd.iloc[nth]
-        return eval(query)
-    
-    def get_coadd(self, num_truth=2, num_coadd=1, sortby=None, nth=None, query=None):
+        if where is not None and not isinstance(where, dict):
+            raise ValueError('`where` should be a dictionary')
+
+        if apply is not None and not isinstance(apply, dict):
+            raise ValueError('`apply` should be a dictionary')
+
+        if where is not None and apply is not None:
+            raise ValueError('You can use either use the `where` approach or the `apply` approach. If you have to use `where` while applying, add it to the `apply` dictionary.')
+        
+        if cols is not None and not isinstance(cols, list):
+            cols = [cols]
+
+        if get is not None and get not in (True, False) and not isinstance(get, list):
+            get = [get]
+
+        if inplace is None:
+            inplace = False
+
+        if inplace and apply is None:
+            apply = {} # so that it definitely goes through the `apply` process
+
+        if cols is not None:
+            if len(cols) != len(set(cols)):
+                raise ValueError('Duplicates found in `cols`.')
+
+        if get is not None and get not in (True, False):
+            if len(get) != len(set(get)):
+                raise ValueError('Duplicates found in `get`.')
+        
+        if cols is not None and get is not None and get not in (True, False):
+            if len(cols+get) != len(set(cols+get)):
+                raise ValueError('Duplicates found in `cols` + `get`.')
+
+        dask_npartitions = dask_workers if dask_npartitions is None else dask_npartitions
         group_mask = np.in1d(self.fof_results['group_id'], np.flatnonzero((self.n_truth_arr == num_truth) & (self.n_coadd_arr == num_coadd)))
-        res = self.fof_results[group_mask & self.coadd_mask].groupby('group_id').apply(self.apply_function_coadd, sortby=sortby, nth=nth, query=query)
-        return res
-    
+        group_info = self.fof_results[group_mask & getattr(self,f'{cat}_mask')]
+        group_info.set_index('row_index') # essential for a correct match
+
+        # - inner join
+        df_to_use = pd.merge(getattr(self,f'{cat}_df'), group_info['group_id'].to_frame(name='group_id'), left_index=True, right_index=True).reset_index(drop=True)
+        df_to_use = df_to_use.sort_values('group_id').reset_index(drop=True) # sort it for consistent results
+
+        if where is None and apply is None:
+            if cols is not None and get is None:
+                df_to_use = df_to_use[cols]
+            if get is None:
+                return EvaluatePostFiltering(df_to_use, verbose=False)
+            else:
+                # - return the dataframe we want right away w/o going through an unnecessary `apply` or `where`
+                if isinstance(get, list):
+                    epf = EvaluatePostFiltering(df_to_use, verbose=False)
+                    df_to_use = epf.get(cols+get if cols is not None else get, return_df=True)
+                    return_df = False if return_df is None else return_df
+                elif get is True:
+                    # - return the dataframe by default since we probably have many columns
+                    return_df = True if return_df is None else return_df
+                else:
+                    raise ValueError('Illegal value for `get`.')
+                if return_df:
+                    return df_to_use
+                else:
+                    return df_to_use.T.values if len(df_to_use.columns)>1 else df_to_use.T.values[0] # unpackable to numpy arrays
+
+        if where is not None:
+            if cols is not None and get is None:
+                if not isinstance(cols, list):
+                    cols = [cols]
+                cols += ['group_id']
+                df_to_use = df_to_use[cols]
+            quantity_name, operation = list(where.keys())[0], list(where.values())[0]
+            df_to_use = df_to_use.reset_index(drop=True)
+            # https://stackoverflow.com/questions/32459325/python-pandas-dataframe-select-row-by-max-value-in-group
+            reduced = getattr(df_to_use.groupby('group_id')[quantity_name], f'idx{operation}')()
+            df_to_use = df_to_use.loc[reduced].sort_values('group_id').reset_index(drop=True) # sort_values is not necessary, I just wanted to make sure all methodes return dfs of the same row order
+            if get is None:
+                return EvaluatePostFiltering(df_to_use, verbose=verbose, dfdesc=f'{cat} catalog after filtering has already been done')
+            else:
+                if isinstance(get, list):
+                    epf = EvaluatePostFiltering(df_to_use, verbose=verbose, dfdesc=f'{cat} catalog after filtering has already been done')
+                    df_to_use = epf.get(cols+get if cols is not None else get, return_df=True)
+                    return_df = False if return_df is None else return_df
+                elif get is True:
+                    # - return the dataframe by default since we probably have many columns
+                    return_df = True if return_df is None else return_df
+                else:
+                    raise ValueError('Illegal value for `get`.')
+                if return_df: # cols done before + get eval
+                    return df_to_use
+                else:
+                    return df_to_use.T.values if len(df_to_use.columns)>1 else df_to_use.T.values[0] # unpackable to numpy arrays
+        else: # i.e. `apply` is requested
+            if get is not None:
+                
+                if not isinstance(get, (str, list)):
+                    raise ValueError(' `get` must be a string or a list of strings')
+                get_translated = util.translate_easy_string(get, keys=df_to_use.keys().values, prefix='_group', dfdesc=f'{cat} catalog in-place while filtering', verbose=verbose if inplace else False)
+                
+                if not isinstance(get, list):
+                    get = [get]
+                    get_translated = [get_translated]
+
+                dtypes = []
+                used_cols_total = []
+                for q, query in enumerate(get):
+                    used_cols = util.qmatch(query, df_to_use.keys().values)
+                    used_cols_total.extend(used_cols)
+                    if verbose:
+                        logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Columns grabbed for {"the "+util.ordinal(q+1) if len(get)>1 else "this single"} evaluation: {used_cols}')
+                    dtypes.append(max([df_to_use.dtypes[key] for key in used_cols]).name)
+                
+                if 'sort' in apply:
+                    if isinstance(apply['sort'], dict):
+                        apply_cols = [apply['sort']['by']] if isinstance(apply['sort']['by'], str) else apply['sort']['by']
+                        apply_cols = util.qmatch(apply_cols, df_to_use.keys().values)
+                    elif not isinstance(apply['sort'], list):
+                        apply_cols = [apply['sort']]
+                    else: # i.e. a list
+                        apply_cols = apply['sort']
+                else:
+                    apply_cols = []
+
+                used_cols_total_wo_apply = list(set(used_cols_total))
+                used_cols_total = list(set(used_cols_total+apply_cols))
+
+            if get is not None:
+                if cols is not None:
+                    extra_cols_wo_apply = [ec for ec in cols if ec not in used_cols_total_wo_apply]
+                    extra_cols = [ec for ec in cols if ec not in used_cols_total]
+                    extra_cols_dtypes = [df_to_use.dtypes[key].name for key in extra_cols]
+                    get_translated += util.translate_easy_string(extra_cols, keys=df_to_use.keys().values, prefix='_group', verbose=False)
+                    if verbose and len(extra_cols_wo_apply)>0:
+                        logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Extra columns grabbed since you assigned `cols`: {extra_cols_wo_apply}')
+                else:
+                    extra_cols = []
+                    extra_cols_dtypes = []
+                
+                if verbose:
+                    extra_cols_from_apply = [ec for ec in apply_cols if ec not in used_cols_total_wo_apply]
+                    if len(extra_cols_from_apply)>0:
+                        logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Extra columns grabbed because of `apply`: {extra_cols_from_apply}')
+                
+                if cols is not None:
+                    if len(cols)>0:
+                        if return_df is None:
+                            if verbose:
+                                logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Returning the dataframe by default so that you can explicitely see the column names')
+                            return_df = True
+                        elif not return_df:
+                            logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Be careful! Make sure you are unpacking the results in this order: {get+extra_cols}')
+                else:
+                    return_df = False if return_df is None else return_df
+                
+                return_df = True if return_df is None else return_df
+                cols = used_cols_total if cols is None else list(set(cols+used_cols_total))
+                df_to_use = df_to_use[cols+['group_id']]
+                df_to_use = dd.from_pandas(df_to_use, npartitions=dask_npartitions)
+                
+                if not inplace:
+                    dtypes = df_to_use.dtypes.values
+                    dtypes = [dv.name for dv in dtypes]
+                    meta = dict(zip(cols,dtypes))
+                    with DaskProgressBar(desc='Generating values', position=0, leave=leave, mininterval=None, maxinterval=None):
+                        res = df_to_use.groupby('group_id').apply(self.eval_function, meta=meta, apply=apply).compute(scheduler=dask_scheduler,num_workers=dask_workers).sort_index().reset_index(drop=True)
+                    filtered = EvaluatePostFiltering(res, verbose=verbose, dfdesc=f'{cat} catalog after filtering has already been done')
+                    return filtered.get(get+extra_cols, return_df=return_df)
+                else:
+                    meta=dict(zip(get+extra_cols,dtypes+extra_cols_dtypes))
+                    keys=meta.keys()
+                    with DaskProgressBar(desc='Generating values', position=0, leave=leave, mininterval=None, maxinterval=None):
+                        res = df_to_use.groupby('group_id').apply(self.eval_function, meta=meta, keys=keys, apply=apply, get=get_translated).compute(scheduler=dask_scheduler,num_workers=dask_workers).sort_index().reset_index(drop=True)
+                    if not return_df:
+                        res = res.T.values if len(res.columns)>1 else res.T.values[0] # it makes the results unpackable to numpy arrays, e.g. col1, col2 = filter(...)
+                    if verbose: print(checkmark+' Done!')
+                    return res
+            else:
+                keys = list(df_to_use.keys().values)
+                dtypes = df_to_use.dtypes.values
+                if cols is None:    
+                    cols = keys
+                    dtypes = [dv.name for dv in dtypes]
+                    meta = dict(zip(keys,dtypes))
+                else:
+                    cols = [kv for kv in keys if kv in cols]
+                    dtypes = [dv.name for kv, dv in zip(keys, dtypes) if kv in cols]
+                    meta = dict(zip(cols,dtypes))
+                df_to_use = df_to_use[cols]
+                df_to_use = dd.from_pandas(df_to_use, npartitions=dask_npartitions)
+                with DaskProgressBar(desc='Filtering', position=0, leave=leave, mininterval=None, maxinterval=None):
+                    res = df_to_use.groupby('group_id').apply(self.eval_function, meta=meta, keep_group_key=True, apply=apply).compute(scheduler=dask_scheduler,num_workers=dask_workers).sort_index().reset_index(drop=True)
+                return EvaluatePostFiltering(res, verbose=verbose, dfdesc=f'{cat} catalog after filtering has already been done')
+
+    def eval_function(self, _group, apply=None, get=None, keys=None, keep_group_key=False):
+        # nth can be a list or just a number
+        if apply is not None:
+            if 'where' in apply:
+                assert len(apply)==1, "Either use `where` or {sort and/or nth} in the `apply` dictionary."
+                where = apply['where']
+                quantity_name, operation = list(where.keys())[0], list(where.values())[0]
+                _group = _group.loc[ getattr(_group.groupby('group_id')[quantity_name], f'idx{operation}')() ]
+            else:
+                if 'sort' in apply:
+                    sort = apply['sort']        
+                    if sort is not None:
+                        _group = _group.sort_values(**sort) if isinstance(sort, dict) else _group.sort_values(sort)
+                if 'nth' in apply:
+                    nth = apply['nth']
+                    if nth is not None:
+                        if not isinstance(nth, list):
+                            nth = [nth]
+                        _group = _group.iloc[nth]
+        # if you are only interested in max and min, argmax and argmin might be more efficient:
+        # https://stackoverflow.com/questions/44855266/dask-getting-the-row-which-has-the-max-value-in-groups-using-groupby
+        _group=_group.reset_index(drop=True)
+        if get is not None:
+            df_dict = dict(zip(keys, keys)) # a placeholder for actual values
+            for key, key_ in zip(keys, get):
+                df_dict[key] = eval(key_)
+            return pd.DataFrame(df_dict, index=list(range(len(_group))))
+        else:
+            if not keep_group_key: del _group['group_id']
+            return _group
+
     # ------------------------
     # plotting functions
     # ------------------------
@@ -617,10 +771,12 @@ class PhotozBlend(object):
                 raise RuntimeError(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You should provide the `fig` argument for the `ax` that you gave.')
         elif figsize is not None:
                 logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: `figsize` is not needed when the `fig` argument is already given.')
+        
         if fig is None:
             if figsize is None:
                 figsize = (9,9)
             fig = plt.figure(figsize=figsize)
+        
         if ax is None:
             ax = fig.add_subplot(111)
         
@@ -633,14 +789,14 @@ class PhotozBlend(object):
         ax.set_ylabel('dec/deg');
 
         if save_plot:
-            usedir(plot_dir)
+            util.usedir(plot_dir)
             if not plot_dir.endswith('/'): plot_dir += '/'
             fpath = plot_dir+save_name
             fpath = fpath.format(**locals())
             fpath = fpath if fpath.startswith(os.getcwd()) else os.getcwd()+'/'+fpath
             fig.savefig(fpath, bbox_inches='tight')
-            if verbose: logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
-
+            if verbose:
+                logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
         
     def plot_fof(self, fig=None, figsize=None, ax=None, colorbar='horizontal', pad='1.3%', annotate=True,
                  box=True, cmap='Blues', colorbar_lim=None, save_plot=False, use_latest=False,
@@ -652,10 +808,12 @@ class PhotozBlend(object):
                 raise RuntimeError(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You should provide the `fig` argument for the `ax` that you gave.')
         elif figsize is not None:
                 logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: `figsize` is not needed when the `fig` argument is already given.')
+        
         if fig is None:
             if figsize is None:
                 figsize = (9,9)
             fig = plt.figure(figsize=figsize)
+        
         if ax is None:
             ax = fig.add_subplot(111)
             
@@ -717,17 +875,17 @@ class PhotozBlend(object):
                     #   applied. im.norm(data.max())/2 takes the middle of the colormap as separation
                     threshold = im.norm(self.fof_matrix.max())/2
                     textcolor = textcolors[int(im.norm(self.fof_matrix[i, j]) > threshold)]
-                    ax.text(j, i, suffixed_format(self.fof_hist_2d[i,j],precision=0), ha='center', va='center',
+                    ax.text(j, i, util.suffixed_format(self.fof_hist_2d[i,j],precision=0), ha='center', va='center',
                              fontweight='regular', fontsize='x-large', color=textcolor)
         if save_plot:
-            usedir(plot_dir)
+            util.usedir(plot_dir)
             if not plot_dir.endswith('/'): plot_dir += '/'
             fpath = plot_dir+save_name
             fpath = fpath.format(**locals())
             fpath = fpath if fpath.startswith(os.getcwd()) else os.getcwd()+'/'+fpath
             fig.savefig(fpath, bbox_inches='tight')
-            if verbose: logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
-            
+            if verbose:
+                logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
             
     def plot_zz(self, pz_type=None, truth_pick=None, num_truth=None, num_coadd=None, xlim=(0,3), ylim=(0,3), fig=None,
                 figsize=None, ax=None, colorbar='horizontal', pad='1.3%', cmap=plt.cm.Spectral_r, annotate=True,
@@ -748,10 +906,12 @@ class PhotozBlend(object):
                 raise RuntimeError(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You should provide the `fig` argument for the `ax` that you gave.')
         elif figsize is not None:
                 logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: `figsize` is not needed when the `fig` argument is already given.')
+        
         if fig is None:
             if figsize is None:
                 figsize = (9,9)
             fig = plt.figure(figsize=figsize)
+        
         if ax is None:
             ax = fig.add_subplot(111)
 
@@ -792,7 +952,7 @@ class PhotozBlend(object):
         ax.set_facecolor(cmap(0.0)) 
         
         if save_plot:
-            usedir(plot_dir)
+            util.usedir(plot_dir)
             num_truth = self.num_truth
             num_coadd = self.num_coadd
             
@@ -801,8 +961,8 @@ class PhotozBlend(object):
             fpath = fpath.format(**locals())
             fpath = fpath if fpath.startswith(os.getcwd()) else os.getcwd()+'/'+fpath
             fig.savefig(fpath, bbox_inches='tight')
-            if verbose: logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
-                
+            if verbose:
+                logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
             
     def plot_pdf(self, pz_type=None, truth_pick=None, num_truth=None, num_coadd=None, xlim=None, ylim=None, leave=False,
                  verbose=True, fig=None, figsize=None, ax=None, annotate=True, kde_bandwidth='scott', n_iter=10,
@@ -818,10 +978,12 @@ class PhotozBlend(object):
                 raise RuntimeError(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You should provide the `fig` argument for the `ax` that you gave.')
         elif figsize is not None:
                 logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: `figsize` is not needed when the `fig` argument is already given.')
+        
         if fig is None:
             if figsize is None:
                 figsize = (10,8)
             fig = plt.figure(figsize=figsize)
+        
         if ax is None:
             ax = fig.add_subplot(111)
 
@@ -870,7 +1032,7 @@ class PhotozBlend(object):
         ax.legend([handles[idx] for idx in order],[labels[idx] for idx in order]);
         
         if save_plot:
-            usedir(plot_dir)
+            util.usedir(plot_dir)
             num_truth = self.num_truth
             num_coadd = self.num_coadd
             if hasattr(self, 'truth_pick'):
@@ -882,7 +1044,8 @@ class PhotozBlend(object):
             fpath = fpath.format(**locals())
             fpath = fpath if fpath.startswith(os.getcwd()) else os.getcwd()+'/'+fpath
             fig.savefig(fpath, bbox_inches='tight')
-            if verbose: logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
+            if verbose:
+                logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
 
     def plot_pit(self, pz_type=None, truth_pick=None, num_truth=None, num_coadd=None, xlim=None, ylim=None, leave=False, verbose=True,
                  fig=None, figsize=None, ax=None, annotate=True, kde_bandwidth='scott', k_splits=None, cv=None, n_jobs=None, use_latest=False,
@@ -897,10 +1060,12 @@ class PhotozBlend(object):
                 raise RuntimeError(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You should provide the `fig` argument for the `ax` that you gave.')
         elif figsize is not None:
                 logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: `figsize` is not needed when the `fig` argument is already given.')
+        
         if fig is None:
             if figsize is None:
                 figsize = (10,8)
             fig = plt.figure(figsize=figsize)
+        
         if ax is None:
             ax = fig.add_subplot(111)
 
@@ -927,7 +1092,7 @@ class PhotozBlend(object):
         ax.ticklabel_format(style='sci', scilimits=(0,0))
 
         if save_plot:
-            usedir(plot_dir)
+            util.usedir(plot_dir)
             num_truth = self.num_truth
             num_coadd = self.num_coadd
             truth_pick = '-'+self.truth_pick if self.truth_pick else ''
@@ -936,7 +1101,8 @@ class PhotozBlend(object):
             fpath = fpath.format(**locals())
             fpath = fpath if fpath.startswith(os.getcwd()) else os.getcwd()+'/'+fpath
             fig.savefig(fpath, bbox_inches='tight')
-            if verbose: logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
+            if verbose:
+                logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
 
     def plot_multi(self, names=['fof','zz','pdf','pit'], num_truth=None, num_coadd=None, truth_pick=None, pz_type=None,
                    figsize=(15,15), nrows=2, ncols=2, height_ratios=[1.53, 1], suptitle=None, force_refresh=False, use_latest=False,
@@ -969,7 +1135,7 @@ class PhotozBlend(object):
         fig.tight_layout(pad=3.0)
 
         if save_plot:
-            usedir(plot_dir)
+            util.usedir(plot_dir)
             num_truth = self.num_truth if hasattr(self, 'num_truth') else 'x' 
             num_coadd = self.num_coadd if hasattr(self, 'num_truth') else 'x'
             if hasattr(self, 'truth_pick'):
@@ -981,11 +1147,81 @@ class PhotozBlend(object):
             fpath = fpath.format(**locals())
             fpath = fpath if fpath.startswith(os.getcwd()) else os.getcwd()+'/'+fpath
             fig.savefig(fpath, bbox_inches='tight')
-            if verbose: logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
-                
+            if verbose:
+                logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: The plot is saved in '{fpath}'")
+
+class EvaluatePostFiltering:
+    def __init__(self, df, verbose=True, dfdesc='dataframe'): 
+        self.df = df
+        self.verbose = verbose
+        self.dfdesc = dfdesc
+
+    def get(self, *easy_string, cols=[], return_df=None, verbose=None, pandas_eval=False):
+        if verbose is None:
+            verbose = self.verbose
+
+        if len(easy_string)==0:
+            if return_df is None or return_df:
+                return self.df
+            else:
+                return self.df.T.values if len(self.df.columns)>1 else self.df.T.values[0]
+        elif len(easy_string)==1 and isinstance(easy_string[0], list):
+            easy_string = easy_string[0]
+
+        easy_string = list(easy_string)
+
+        if return_df is None:
+            return_df = False        
+
+        if not isinstance(easy_string, list):
+            easy_string = [easy_string]
+        
+        easy_string += cols
+        easy_string_set = list(set(easy_string))
+        
+        if len(easy_string) != len(easy_string_set):
+            return_df = True
+            easy_string = easy_string_set
+            logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Returning the dataframe since there were duplicates in the column names')
+        
+        if len(cols)>0:
+            if return_df is None:
+                if verbose:
+                    logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Returning the dataframe by default so that you can explicitely see the column names')
+                return_df = True
+            elif not return_df:
+                logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Be careful! Make sure you are unpacking the results in this order: {easy_string}')
+        
+        easy_string_translated = util.translate_easy_string(easy_string, keys=self.df.keys().values, prefix='self.df', verbose=self.verbose, dfdesc=self.dfdesc)
+        
+        if verbose:
+            logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Columns accessible for the {len(easy_string)} evaluation{"s" if len(easy_string)>1 else ""}: {list(self.df.keys().values)}')
+        
+        if pandas_eval:
+            # example of ra = 61.02766210779587 (dtype: object) with this method?
+            # however the other method gives ra = 61.02766211 (dtype: float64) which is what we expect
+            df = pd.DataFrame(self.df.eval(easy_string).T, columns=easy_string)
+        else: # faster with correct data types
+            # - using dict
+            # df_dict = dict(zip(easy_string, easy_string)) # a placeholder for actual values
+            # for key, key_ in zip(easy_string, easy_string_translated):
+            #     df_dict[key] = eval(key_).reset_index(drop=True)
+            # df = pd.DataFrame(df_dict, index=list(range(len(list(df_dict.values())[0]))))
+            # - directly using the list of arrays
+            df_data = []
+            for key_ in easy_string_translated:
+                df_data.append(eval(key_).values)
+            df = pd.DataFrame(np.array(df_data).T, columns=easy_string)
+        if not return_df:
+            df = df.T.values if len(df.columns)>1 else df.T.values[0]
+
+        if verbose: print(checkmark+' Done!')
+
+        return df
+
 # http://stackoverflow.com/questions/2352181/how-to-use-a-dot-to-access-members-of-dictionary
 class DotDict(defaultdict):    
-    def __init__(self): 
+    def __init__(self):
         super().__init__()
 
     def __getattr__(self, key):
@@ -996,7 +1232,6 @@ class DotDict(defaultdict):
             
     def __setattr__(self, key, value):
         self[key] = value
-        
         
 # modified from https://github.com/tqdm/tqdm/issues/278
 # Non-tqdm alternative: from dask.diagnostics import ProgressBar as DaskProgressbar
