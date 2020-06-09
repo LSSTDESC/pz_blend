@@ -658,7 +658,6 @@ class PhotozBlend(object):
                 used_cols_total_wo_apply = list(set(used_cols_total))
                 used_cols_total = list(set(used_cols_total+apply_cols))
 
-            if get is not None:
                 if cols is not None:
                     extra_cols_wo_apply = [ec for ec in cols if ec not in used_cols_total_wo_apply]
                     extra_cols = [ec for ec in cols if ec not in used_cols_total]
@@ -1157,6 +1156,7 @@ class EvaluatePostFiltering:
         self.dfdesc = dfdesc
 
     def get(self, *easy_string, cols=[], return_df=None, verbose=None, pandas_eval=False):
+
         if verbose is None:
             verbose = self.verbose
 
@@ -1168,7 +1168,7 @@ class EvaluatePostFiltering:
         elif len(easy_string)==1 and isinstance(easy_string[0], list):
             easy_string = easy_string[0]
 
-        easy_string = list(easy_string)
+        easy_string = list(easy_string) # by default it is a tuple since it is passed like *args
 
         if return_df is None:
             return_df = False        
@@ -1178,12 +1178,12 @@ class EvaluatePostFiltering:
         
         easy_string += cols
         easy_string_set = list(set(easy_string))
-        
+
         if len(easy_string) != len(easy_string_set):
             return_df = True
             easy_string = easy_string_set
             logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Returning the dataframe since there were duplicates in the column names')
-        
+
         if len(cols)>0:
             if return_df is None:
                 if verbose:
@@ -1191,27 +1191,32 @@ class EvaluatePostFiltering:
                 return_df = True
             elif not return_df:
                 logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Be careful! Make sure you are unpacking the results in this order: {easy_string}')
-        
+
+        dtypes = []
+        for query in easy_string:
+            used_cols = util.qmatch(query, self.df.keys().values)
+            dtype = max([self.df.dtypes[key] for key in used_cols]).name
+            dtypes.append(dtype)
+
         easy_string_translated = util.translate_easy_string(easy_string, keys=self.df.keys().values, prefix='self.df', verbose=self.verbose, dfdesc=self.dfdesc)
         
         if verbose:
             logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: Columns accessible for the {len(easy_string)} evaluation{"s" if len(easy_string)>1 else ""}: {list(self.df.keys().values)}')
         
         if pandas_eval:
-            # example of ra = 61.02766210779587 (dtype: object) with this method?
-            # however the other method gives ra = 61.02766211 (dtype: float64) which is what we expect
+            # it infers `dtype` automatically and gives e.g. ra = 61.02766210779587 (dtype: object) instead of ra = 61.02766211 (dtype: float64)
             df = pd.DataFrame(self.df.eval(easy_string).T, columns=easy_string)
-        else: # faster with correct data types
-            # - using dict
-            # df_dict = dict(zip(easy_string, easy_string)) # a placeholder for actual values
-            # for key, key_ in zip(easy_string, easy_string_translated):
-            #     df_dict[key] = eval(key_).reset_index(drop=True)
-            # df = pd.DataFrame(df_dict, index=list(range(len(list(df_dict.values())[0]))))
-            # - directly using the list of arrays
-            df_data = []
-            for key_ in easy_string_translated:
-                df_data.append(eval(key_).values)
-            df = pd.DataFrame(np.array(df_data).T, columns=easy_string)
+        else: # faster
+            # - using dict with the correct `dtype`
+            df_dict = dict(zip(easy_string, easy_string)) # a placeholder for actual values
+            for key, key_, dt in zip(easy_string, easy_string_translated, dtypes):
+                df_dict[key] = np.array(eval(key_).values, dtype=dt) # faster than pd.Series(eval(key_).tolist(), dtype=dt)
+            df = pd.DataFrame(df_dict, index=range(len(list(df_dict.values())[0])))
+            # - directly using the list of arrays (does not respect the data types similar to pandas eval)
+            # df_data = []
+            # for key_ in easy_string_translated:
+            #     df_data.append(eval(key_).values)
+            # df = pd.DataFrame(np.array(df_data).T, columns=easy_string)
         if not return_df:
             df = df.T.values if len(df.columns)>1 else df.T.values[0]
 
