@@ -22,6 +22,6 @@ setup(name='pzblend',
           "joblib", 
           "scikit-learn>=0.22.1", 
           "tqdm",
-          "scikit-gof",
+          "scikit-gof @ git+https://github.com/cosmicshear/scikit-gof",
       ],
       zip_safe=False)
