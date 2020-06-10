@@ -127,23 +127,20 @@ class PhotozBlend(object):
         " print important parameters (current) "
         
         excluded = ['_plot_fof'] # not interesting
-        
-        # with pd.option_context('display.max_colwidth', 220): 
-
         param_df = pd.DataFrame([])
-        pd.set_option('display.max_rows', 45)
-        pd.set_option('display.min_rows', 45)
-        pd.set_option('display.max_colwidth', 60)
-
-        for attr, value in vars(cls).items(): #.keys(): #param_keys:
-            if attr in excluded:
-                continue
-            if isinstance(value, (np.ndarray, list, pd.DataFrame)):
-                if isinstance(value, pd.DataFrame):
-                    value = value.to_numpy()
-                value = np.array2string(np.array(value), max_line_width=30, edgeitems=7, threshold=3)
-            row = pd.Series({'value':value},name=attr)
-            param_df = param_df.append(row)
+        
+        with pd.option_context('display.max_colwidth', 60,
+                               'display.min_rows', 45,
+                               'display.max_rows', 45): 
+            for attr, value in vars(cls).items():
+                if attr in excluded:
+                    continue
+                if isinstance(value, (np.ndarray, list, pd.DataFrame)):
+                    if isinstance(value, pd.DataFrame):
+                        value = value.to_numpy()
+                    value = np.array2string(np.array(value), max_line_width=30, edgeitems=7, threshold=3)
+                row = pd.Series({'value':value},name=attr)
+                param_df = param_df.append(row)
         
         return param_df
     
