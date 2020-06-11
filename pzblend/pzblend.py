@@ -14,6 +14,7 @@ from dask.callbacks import Callback
 import dask
 import dask.dataframe as dd
 import scipy.stats as stats
+from scipy.interpolate import interp1d
 from sklearn.neighbors import KernelDensity
 from collections import defaultdict, ChainMap
 import inspect
@@ -22,7 +23,6 @@ import bz2
 import gzip
 import joblib
 import random
-import skgof
 from . import util
 
 random.seed(1915)
@@ -506,27 +506,31 @@ class PhotozBlend(object):
             if verbose:
                 logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The PIT values remained unchanged since no update was needed.')
  
-    def KS(self):
-        assert self.PITS is not None, "you must create pit_array first, try running calc_pits()"
+    def KS_PITS(self):
+        if not hasattr(self,"PITS") or len(self.PITS) == 0:
+            if not hasattr(self,'object_idx'):
+                print('you ned to define the number of truth and coadd objects first')
+                print('try doing plot_pits(**kwargs) first')
+                return
+            else:
+                self.calc_pits()
         pits = np.array(self.PITS)
-        ks_result = skgof.ks_test(pits, stats.uniform())
-        return ks_result.statistic, ks_result.pvalue
+        ks_result = stats.kstest(pits, 'uniform')
+        return ks_result
 
-    def CvM(self):
-        assert self.PITS is not None, "you must create pit_array first, try running calc_pits()"
-        pits = np.array(self.PITS)
-        cvm_result = skgof.cvm_test(pits, stats.uniform())
-        return cvm_result.statistic, cvm_result.pvalue
-
-    def AD(self, vmin=.005, vmax=.995):
-        assert self.PITS is not None, "you must create pit_array first, try running calc_pits()"
-        pits = np.array(self.PITS)
-        mask = (pits>vmin) & (pits<vmax)
-        print("now with proper uniform range")
-        delv = vmax-vmin
-        ad_result = skgof.ad_test(pits[mask], stats.uniform(loc=vmin,scale=delv))
-        return ad_result.statistic, ad_result.pvalue
-
+    def KS_PDF(self):
+        if not hasattr(self,"stacked_pz"):
+            print('you need to define the number of truth and coadd objects first')
+            print('try doing plot_pdfs(**kwargs) first')
+            return
+        x = np.sort(self.true_z)
+        n = x.size
+        y = np.arange(1,1+n)/n
+        ecdf = interp1d(x,y)
+        pz_cdf = np.cumsum(self.stacked_pz)/np.cumsum(self.stacked_pz)[-1]
+        ks_stat = np.max(np.abs(ecdf(self.zgrid[1:-2]) - pz_cdf[1:-2]))
+        return ks_stat
+        
     def filter(self, cat=None, num_truth=2, num_coadd=1, where=None, apply=None, get=None,
                return_df=None, leave=False, cols=None, inplace=None, dask_scheduler='threads',
                dask_workers=2*multiprocessing.cpu_count(), dask_npartitions=None, verbose=True):
