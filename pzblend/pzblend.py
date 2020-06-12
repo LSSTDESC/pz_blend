@@ -476,12 +476,29 @@ class PhotozBlend(object):
             # the other three refreshes will remain unchanged
             # they can only be False if later they get called and update their results
 
+    def calc_nth_moment(self,z,pz,n):
+        '''calculte the nth moment of a distribution'''
+        zpow = np.power(z,n)
+        norm = np.trapz(pz, x=z)
+        unnorm_mom = np.trapz(zpow*pz, x=z)
+        moment = unnorm_mom/norm
+        return moment
+    
+    def calc_3_moments(self):
+        '''calculate the first three moments of stacked pz'''
+        if not hasattr(self,'stacked_pz'):
+            print('you need to define the number of truth and coadd objects first')
+            print('try doing plot_pdfs(**kwargs) first')
+            return
+        else:
+            first, second, third = [self.calc_nth_moment(self.zgrid, self.stacked_pz, i) for i in (1,2,3)]
+            return {'first':first, 'second':second, 'third':third}
+
+        
     def stack_photoz(self,verbose=True,force_refresh=False):
         if self.refresh_pdf or force_refresh or not hasattr(self,'stacked_pz'):
             self.stacked_pz = (self.coadd_df['photoz_pdf'][self.object_idx]).sum(axis=0)
-            top = np.trapz(self.zgrid*self.stacked_pz, x=self.zgrid)
-            bottom = np.trapz(self.stacked_pz, x=self.zgrid)
-            self.pzmean = top/bottom
+            self.pzmean = self.calc_nth_moment(self.zgrid,self.stacked_pz,1)
             self.refresh_pdf = False
             if verbose:
                 logging.info(f"{inspect.stack()[1].function}:{inspect.stack()[0].function}: New stacked photoz's have been created.")
