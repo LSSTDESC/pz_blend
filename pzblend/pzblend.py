@@ -503,23 +503,30 @@ class PhotozBlend(object):
             if verbose:
                 logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The PIT values remained unchanged since no update was needed.')
  
-    def KS_PITS(self):
+    def KS_PITS(self, verbose=True):
         if not hasattr(self,"PITS") or len(self.PITS) == 0:
             if not hasattr(self,'object_idx'):
-                print('you ned to define the number of truth and coadd objects first')
-                print('try doing plot_pits(**kwargs) first')
+                logging.error(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You need to define the number of truth and coadd objects first.\n'+
+                                 'Try running plot_pit(**kwargs), exiting...')
                 return
             else:
                 self.calc_pits()
+                if verbose:
+                     logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: New PIT values have been created.')
         pits = np.array(self.PITS)
         ks_result = stats.kstest(pits, 'uniform')
         return ks_result
 
-    def KS_PDF(self):
+    def KS_PDF(self, verbose=True):
         if not hasattr(self,"stacked_pz"):
-            print('you need to define the number of truth and coadd objects first')
-            print('try doing plot_pdfs(**kwargs) first')
-            return
+            if not hasattr(self,'object_idx'):
+                logging.error(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You need to define the number of truth and coadd objects first.\n'+
+                                 'Try running plot_pdf(**kwargs), exiting...')
+                return
+            else:
+                self.stack_photoz()
+                if verbose:
+                     logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: New stacked photoz pdf has been created.')
         x = np.sort(self.true_z)
         n = x.size
         y = np.arange(1,1+n)/n
