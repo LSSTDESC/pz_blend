@@ -520,30 +520,92 @@ class PhotozBlend(object):
             if verbose:
                 logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: The PIT values remained unchanged since no update was needed.')
  
-    def KS_PITS(self, verbose=True):
-        if not hasattr(self,"PITS") or len(self.PITS) == 0:
-            if not hasattr(self,'object_idx'):
-                logging.error(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You need to define the number of truth and coadd objects first.\n'+
-                                 'Try running plot_pit(**kwargs), exiting...')
-                return
+    def KS_PITS(self, num_truth=None, num_coadd=None, pz_type=None,
+                truth_pick=None, force_refresh=False, verbose=True, use_latest=False, leave=False):
+        """
+        calculate the kolmogorov-smirnov test between the PIT histogram
+        and idealized case of a uniform distribution
+        Parameters
+        ----------
+        num_truth: (int)
+          the number of truth objects in the matched catalog, e.g.
+          num_truth=1 is the subset with 1 truth object per group
+        num_coadd: (int)
+          the number of coadd objects per group in the matched catalog, e.g.
+          num_coadd=2 is the subset with 2 coadd objects per group
+        pz_type: (str)
+          The specific point estimate for which you want to estimate the
+          statistics for
+        truth_pick: (str)
+          when multiple truth objects present, sets which to use, e.g.
+          'bright' chooses the brighter of the two, 'faint' chooses the
+          fainter.
+        Returns
+        -------
+        ks_stat: (tuple)
+          the ks statistic evaluated between the PIT histogram and 
+          the ideal case of a uniform distribution, and the associated
+          p-value
+        """
+        if not use_latest:
+            if num_truth is None and num_coadd is None and pz_type is None:
+                if hasattr(self,'num_truth') and hasattr(self,'num_coadd') and hasattr(self,'pz_type'):
+                    if truth_pick is None and hasattr(self,'truth_pick'):
+                        truth_pick=self.truth_pick # use the stored one if necessary
+                    self.load_redshifts(num_truth=self.num_truth, num_coadd=self.num_coadd, pz_type=self.pz_type, truth_pick=truth_pick, force_refresh=force_refresh, verbose=verbose)
+                else:
+                    self.load_redshifts(num_truth=1, num_coadd=1, pz_type='z_mode', force_refresh=force_refresh, verbose=verbose)
             else:
-                self.calc_pits()
-                if verbose:
-                     logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: New PIT values have been created.')
+                self.load_redshifts(num_truth=num_truth, num_coadd=num_coadd, pz_type=pz_type, truth_pick=truth_pick, force_refresh=force_refresh, verbose=verbose)
+
+            # - calculate PIT values
+            self.calc_pits(leave=leave, force_refresh=force_refresh, verbose=verbose)
+            
         pits = np.array(self.PITS)
         ks_result = stats.kstest(pits, 'uniform')
         return ks_result
 
-    def KS_PDF(self, verbose=True):
-        if not hasattr(self,"stacked_pz"):
-            if not hasattr(self,'object_idx'):
-                logging.error(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You need to define the number of truth and coadd objects first.\n'+
-                                 'Try running plot_pdf(**kwargs), exiting...')
-                return
+    def KS_PDF(self, num_truth=None, num_coadd=None, pz_type=None,
+               truth_pick=None, force_refresh=False, verbose=True, use_latest=False):
+        """
+        calculate the kolmogorov-smirnov test between the true redshift
+        distribution and the stacked pzs
+        Parameters
+        ----------
+        num_truth: (int)
+          the number of truth objects in the matched catalog, e.g. 
+          num_truth=1 is the subset with 1 truth object per group
+        num_coadd: (int)
+          the number of coadd objects per group in the matched catalog, e.g.
+          num_coadd=2 is the subset with 2 coadd objects per group
+        pz_type: (str)    
+          The specific point estimate for which you want to estimate the
+          statistics for
+        truth_pick: (str)
+          when multiple truth objects present, sets which to use, e.g.
+          'bright' chooses the brighter of the two, 'faint' chooses the 
+          fainter.
+        Returns
+        -------
+        ks_stat: (float)
+          the ks statistic evaluated between the eCDF of true redshifts
+          and the cdf of the stacked pzs.
+        """
+        if not use_latest:
+            if num_truth is None and num_coadd is None and pz_type is None:
+                if hasattr(self,'num_truth') and hasattr(self,'num_coadd') and hasattr(self,'pz_type'):
+                    if truth_pick is None and hasattr(self,'truth_pick'):
+                        truth_pick=self.truth_pick # use the stored one if necessary
+                    self.load_redshifts(num_truth=self.num_truth, num_coadd=self.num_coadd, pz_type=self.pz_type, truth_pick=truth_pick, force_refresh=force_refresh, verbose=verbose)
+                else:
+                    self.load_redshifts(num_truth=1, num_coadd=1, pz_type='z_mode', force_refresh=force_refresh, verbose=verbose)
             else:
-                self.stack_photoz()
-                if verbose:
-                     logging.info(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: New stacked photoz pdf has been created.')
+                self.load_redshifts(num_truth=num_truth, num_coadd=num_coadd, pz_type=pz_type, truth_pick=truth_pick, force_refresh=force_refresh, verbose=verbose)
+            self.true_z_mean = self.true_z.mean()
+
+	    # - calculate stacked photoz pdf (no action if it has already been calculated for this parameters unless `force_refresh` is True)
+            self.stack_photoz(force_refresh=force_refresh,verbose=verbose)
+                
         x = np.sort(self.true_z)
         n = x.size
         y = np.arange(1,1+n)/n
