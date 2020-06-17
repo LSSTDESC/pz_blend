@@ -552,6 +552,67 @@ class PhotozBlend(object):
         ks_stat = np.max(np.abs(ecdf(self.zgrid[1:-2]) - pz_cdf[1:-2]))
         return ks_stat
         
+    def calc_point_statistics(self, num_truth=None, num_coadd=None, pz_type=None, 
+                        truth_pick=None,force_refresh=False,verbose=True,
+                        use_latest=False):
+        """
+        calculate the std deviation calcualted using the interquartile range 
+        (more stable to outliers than std dev with no cuts). This calculates
+        ez = (zpoint - zspec)/(1+zspec) as an intermediate quantity
+        Parameters
+        ----------
+        num_truth: (int)
+          the number of truth objects in the matched catalog, e.g. 
+          num_truth=1 is the subset with 1 truth object per group
+        num_coadd: (int)
+          the number of coadd objects per group in the matched catalog, e.g.
+          num_coadd=2 is the subset with 2 coadd objects per group
+        pz_type: (str)    
+          The specific point estimate for which you want to estimate the
+          statistics for
+        truth_pick: (str)
+          when multiple truth objects present, sets which to use, e.g.
+          'bright' chooses the brighter of the two, 'faint' chooses the 
+          fainter.
+        Returns
+        -------
+        tuple of three numbers (sig_iqr, bias, cat_outlier_rate)
+        sig_iqr: (float)
+          the std deviation of the ez values
+        bias: (float)
+          the median of the ez values
+        cat_outlier rate: (float)
+          The fraction of ez values greater than 0.15
+        """
+        ez = []
+
+        if not use_latest:
+            if num_truth is None and num_coadd is None and pz_type is None:
+                if hasattr(self,'num_truth') and hasattr(self,'num_coadd') and hasattr(self,'pz_type'):
+                    if truth_pick is None and hasattr(self,'truth_pick'):
+                        truth_pick=self.truth_pick # use the stored one if necessary
+                        self.load_redshifts(num_truth=self.num_truth, num_coadd=self.num_coadd, 
+                                            pz_type=self.pz_type, truth_pick=truth_pick, 
+                                            force_refresh=force_refresh, verbose=verbose)
+                else:
+                    self.load_redshifts(num_truth=1, num_coadd=1, pz_type='z_mode', truth_pick=truth_pick, 
+                                        force_refresh=force_refresh, verbose=verbose)
+            else:
+                self.load_redshifts(num_truth=num_truth, num_coadd=num_coadd, pz_type=pz_type, 
+                                    truth_pick=truth_pick, force_refresh=force_refresh, 
+                                    verbose=verbose)
+
+        for pez,sz in zip(self.coadd_z,self.true_z):
+            ez.append( (pez-sz)/(1.+sz))
+        pct25,pct75 = np.percentile(ez,[25.,75.])
+        iqr = pct75-pct25
+        sigma_iqr = iqr/1.349
+        bias = np.median(ez)
+        mask = (np.abs(ez)>0.15)
+        f_cat_outlier = float(np.sum(mask)/len(ez))
+
+        return sigma_iqr,bias,f_cat_outlier
+
     def filter(self, cat=None, num_truth=2, num_coadd=1, where=None, apply=None, get=None,
                return_df=None, leave=False, cols=None, inplace=None, dask_scheduler='threads',
                dask_workers=2*multiprocessing.cpu_count(), dask_npartitions=None, verbose=True):
