@@ -559,6 +559,7 @@ class PhotozBlend(object):
         ----------
         *Currently computes loss for previous sample selection. 
         **TODO: add in different selections
+
         Returns
         -------
         cde_loss: (float)
