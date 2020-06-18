@@ -613,7 +613,34 @@ class PhotozBlend(object):
         pz_cdf = np.cumsum(self.stacked_pz)/np.cumsum(self.stacked_pz)[-1]
         ks_stat = np.max(np.abs(ecdf(self.zgrid[1:-2]) - pz_cdf[1:-2]))
         return ks_stat
-        
+
+    def calc_cde_loss(self):
+        """Computes the estimated conditional density loss described in
+        Izbicki & Lee 2017 (arXiv:1704.08095).
+        Parameters
+        ----------
+        *Currently computes loss for previous sample selection. 
+        **TODO: add in different selections
+
+        Returns
+        -------
+        cde_loss: (float)
+          CDE loss value for the dataset, should be a negative number,
+          more negative is "better"
+        """
+        pzsq = []
+        for pdf, sz in zip(self.coadd_df['photoz_pdf'][self.object_idx], self.true_z):
+            pzsq.append(np.trapz(pdf** 2, self.zgrid))
+        term1 = np.mean(pzsq)
+        # find index of the closest grid point to truez for each galaxy)
+        nns = [np.argmin(np.abs(self.zgrid - truesz)) for truesz in self.true_z]
+        peakpdf = []
+        for i,pdf in enumerate(self.coadd_df['photoz_pdf'][self.object_idx]):
+            peakpdf.append(pdf[nns[i]])
+        term2 = np.mean(peakpdf)
+
+        return term1 -2.*term2
+
     def calc_point_statistics(self, num_truth=None, num_coadd=None, pz_type=None, 
                         truth_pick=None,force_refresh=False,verbose=True,
                         use_latest=False):
