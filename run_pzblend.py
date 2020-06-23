@@ -49,7 +49,7 @@ coadd_df = pd.concat(object_df_list)
 
 # deredden the cModel magnitudes
 band_a_ebv = np.array([4.81,3.64,2.70,2.06,1.58,1.31])
-coords = c = SkyCoord(df['ra'], df['dec'], unit = 'deg',frame='fk5')
+coords = c = SkyCoord(coadd_df['ra'], coadd_df['dec'], unit = 'deg',frame='fk5')
 sfd = SFDQuery()
 ebvvec = sfd(coords)
 coadd_df['ebv'] = ebvvec
@@ -65,5 +65,5 @@ zgrid_filename = 'data/zgrid.npy'
 zgrid = np.load(zgrid_filename)
 
 pzb = PhotozBlend(truth_df, coadd_df, zgrid)
-pzb.fof_match(verify=True, plot=False, load_cached=True) #save_cached=True
+pzb.fof_match(verify=True, plot=False, save_cached=True) #load_cached=True
 
