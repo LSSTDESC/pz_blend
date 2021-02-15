@@ -523,7 +523,9 @@ class PhotozBlend(object):
                 self.load_redshifts(num_truth=num_truth, num_coadd=num_coadd, pz_type=pz_type, 
                                     truth_pick=truth_pick, force_refresh=force_refresh, 
                                     verbose=verbose)
-
+        # make stacked pdf if its not already made
+        self.stack_photoz(force_refresh=force_refresh,verbose=verbose)
+                
         first, second, third = [self.calc_nth_moment(self.zgrid, self.stacked_pz, i) for i in (1,2,3)]
         return {'first':first, 'second':second, 'third':third}
 
