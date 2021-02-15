@@ -644,7 +644,7 @@ class PhotozBlend(object):
         x = np.sort(self.true_z)
         n = x.size
         y = np.arange(1,1+n)/n
-        ecdf = interp1d(x,y)
+        ecdf = interp1d(x,y,bounds_error=False, fill_value=(0.0,1.0))
         pz_cdf = np.cumsum(self.stacked_pz)/np.cumsum(self.stacked_pz)[-1]
         ks_stat = np.max(np.abs(ecdf(self.zgrid[1:-2]) - pz_cdf[1:-2]))
         return ks_stat
