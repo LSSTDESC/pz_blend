@@ -484,15 +484,48 @@ class PhotozBlend(object):
         moment = unnorm_mom/norm
         return moment
     
-    def calc_3_moments(self):
-        '''calculate the first three moments of stacked pz'''
-        if not hasattr(self,'stacked_pz'):
-            print('you need to define the number of truth and coadd objects first')
-            print('try doing plot_pdfs(**kwargs) first')
-            return
-        else:
-            first, second, third = [self.calc_nth_moment(self.zgrid, self.stacked_pz, i) for i in (1,2,3)]
-            return {'first':first, 'second':second, 'third':third}
+    def calc_3_moments(self, num_truth=None, num_coadd=None, pz_type=None,
+                       truth_pick=None, force_refresh=False, verbose=True,
+                       use_latest=False):
+        '''calculate the first three moments of stacked pz
+        Parameters
+        ----------
+        num_truth: (int)
+          the number of truth objects in the matched catalog, e.g. 
+          num_truth=1 is the subset with 1 truth object per group
+        num_coadd: (int)
+          the number of coadd objects per group in the matched catalog, e.g.
+          num_coadd=2 is the subset with 2 coadd objects per group
+        pz_type: (str)    
+          The specific point estimate for which you want to estimate the
+          statistics for
+        truth_pick: (str)
+          when multiple truth objects present, sets which to use, e.g.
+          'bright' chooses the brighter of the two, 'faint' chooses the 
+          fainter.
+        Returns
+        -------
+        python dictionary containing the first three moments of the 
+        stacked pzs
+        '''
+        if not use_latest:
+            if num_truth is None and num_coadd is None and pz_type is None:
+                if hasattr(self,'num_truth') and hasattr(self,'num_coadd') and hasattr(self,'pz_type'):
+                    if truth_pick is None and hasattr(self,'truth_pick'):
+                        truth_pick=self.truth_pick # use the stored one if necessary
+                        self.load_redshifts(num_truth=self.num_truth, num_coadd=self.num_coadd, 
+                                            pz_type=self.pz_type, truth_pick=truth_pick, 
+                                            force_refresh=force_refresh, verbose=verbose)
+                else:
+                    self.load_redshifts(num_truth=1, num_coadd=1, pz_type='z_mode', truth_pick=truth_pick, 
+                                        force_refresh=force_refresh, verbose=verbose)
+            else:
+                self.load_redshifts(num_truth=num_truth, num_coadd=num_coadd, pz_type=pz_type, 
+                                    truth_pick=truth_pick, force_refresh=force_refresh, 
+                                    verbose=verbose)
+
+        first, second, third = [self.calc_nth_moment(self.zgrid, self.stacked_pz, i) for i in (1,2,3)]
+        return {'first':first, 'second':second, 'third':third}
 
         
     def stack_photoz(self,verbose=True,force_refresh=False):
