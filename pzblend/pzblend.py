@@ -1241,7 +1241,7 @@ class PhotozBlend(object):
         ax.ticklabel_format(style="sci", scilimits=(0,0))
         handles, labels = ax.get_legend_handles_labels()
         order = [2,1,0]
-        ax.legend([handles[idx] for idx in order],[labels[idx] for idx in order], fontsize=27);
+        ax.legend([handles[idx] for idx in order],[labels[idx] for idx in order], fontsize=25);
         
         if save_plot:
             util.usedir(plot_dir)
