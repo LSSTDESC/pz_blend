@@ -317,7 +317,7 @@ class PhotozBlend(object):
         else:
             self.coadd_cuts = coadd_cuts
             
-    def fof_match(self, linking_lengths=1.0, verify=True, plot=True, colorbar='vertical', save_cached=None, load_cached=None, use_latest=None, verbose=True):
+    def fof_match(self, linking_lengths=1.0, verify=True, plot=True, colorbar='vertical', save_cached=None, load_cached=None, use_latest=None, filename=None, verbose=True):
         " use_latest is an alias for load_cached "
         
         if load_cached and use_latest:
@@ -334,9 +334,12 @@ class PhotozBlend(object):
         if load_cached is None:
             load_cached = False
 
-        if save_cached or load_cached: # TODO: add custom filename feauture
+        if (save_cached or load_cached) and filename is None: 
             self.fof_cache_filename = f'output/fof_results--linking_lengths={self.linking_lengths}.cache'
 
+        if (save_cached or load_cached) and filename is not None:
+            self.fof_cache_filename = filename
+            
         if save_cached and load_cached:
             logging.warning(f'{inspect.stack()[1].function}:{inspect.stack()[0].function}: You cannot set `save_cached=True` and `load_cached=True` at the same time. One of them is redundant.')
 

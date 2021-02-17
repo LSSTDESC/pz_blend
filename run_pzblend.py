@@ -2,13 +2,15 @@ import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+sys.path.insert(0,'/global/homes/i/ihasan/python_stuff/lib/python3.7/site-packages/')
 import dustmaps
 from dustmaps.sfd import SFDQuery
 from astropy.coordinates import SkyCoord
 from dustmaps.config import config
+sys.path.insert(0,'/global/homes/i/ihasan/python_stuff/lib/python3.7/site-packages/')
 from pzblend import PhotozBlend
 #sys.path.insert(0,"/global/cfs/cdirs/lsst/groups/PZ/PhotoZDC2/run2.2i_dr6_test/gcr-catalogs/lib/python3.7/site-packages/GCRCatalogs-0.18.1-py3.7.egg")
-sys.path.insert(0,'/global/homes/i/ihasan/python_stuff/lib/python3.7/site-packages/')
+#sys.path.insert(0,'/global/homes/i/ihasan/python_stuff/lib/python3.7/site-packages/')
 import GCRCatalogs
 from GCR import GCRQuery
 
@@ -66,5 +68,5 @@ zgrid_filename = 'data/zgrid.npy'
 zgrid = np.load(zgrid_filename)
 
 pzb = PhotozBlend(truth_df, coadd_df, zgrid)
-pzb.fof_match(verify=True, plot=False, load_cached=True) #save_cached=True
+pzb.fof_match(verify=True, plot=False, save_cached=True, filename='output/bpz_fof_1.0.cache') #load_cached=True
 
