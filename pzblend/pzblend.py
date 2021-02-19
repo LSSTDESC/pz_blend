@@ -740,9 +740,9 @@ class PhotozBlend(object):
 
         return sigma_iqr,bias,f_cat_outlier
 
-    def KL_divergence(num_truth=None, num_coadd=None, pz_type=None,
+    def KL_divergence(self,num_truth=None, num_coadd=None, pz_type=None,
                         truth_pick=None,force_refresh=False,verbose=True,
-                        use_latest=False):
+                        use_latest=False,leave=False):
         '''
         Calculate the Kullback-Leibler divergence between the pits histogram
         and a uniform distribution. KL divergence measures the relative entropy
@@ -784,8 +784,10 @@ class PhotozBlend(object):
         bin_edges_optimized = np.histogram_bin_edges(self.PITS, bins='auto')
         # make the PIT histograms with optimal binning
         count, bins = np.histogram(self.PITS, bins=bin_edges_optimized)
-        # create a uniform distribution that has the same area as the PIT histogram
-        uniform = (count.sum()/len(count))*np.ones(len(count))
+        # normalize count
+        count = count/count.sum()
+        # create a normalized uniform distribution 
+        uniform = (1.0/len(count))*np.ones(len(count))
         # use scipy to calculate the kl divergence
         kl_div = stats.entropy(count,uniform)
         return kl_div
