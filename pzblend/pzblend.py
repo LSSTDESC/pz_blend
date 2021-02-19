@@ -786,7 +786,8 @@ class PhotozBlend(object):
         count, bins = np.histogram(self.PITS, bins=bin_edges_optimized)
         # create a uniform distribution that has the same area as the PIT histogram
         uniform = (count.sum()/len(count))*np.ones(len(count))
-        kl_div = entropy(count,uniform)
+        # use scipy to calculate the kl divergence
+        kl_div = stats.entropy(count,uniform)
         return kl_div
 
         
