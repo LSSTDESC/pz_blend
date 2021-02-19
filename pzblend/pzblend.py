@@ -740,6 +740,56 @@ class PhotozBlend(object):
 
         return sigma_iqr,bias,f_cat_outlier
 
+    def KL_divergence(num_truth=None, num_coadd=None, pz_type=None,
+                        truth_pick=None,force_refresh=False,verbose=True,
+                        use_latest=False):
+        '''
+        Calculate the Kullback-Leibler divergence between the pits histogram
+        and a uniform distribution. KL divergence measures the relative entropy
+        between a probabailtiy distribution and a reference distribution.
+        Parameters
+        ----------
+        num_truth: (int)
+          the number of truth objects in the matched catalog, e.g.
+          num_truth=1 is the subset with 1 truth object per group
+        num_coadd: (int)
+          the number of coadd objects per group in the matched catalog, e.g.
+          num_coadd=2 is the subset with 2 coadd objects per group
+        pz_type: (str)
+          The specific point estimate for which you want to estimate the
+          statistics for
+        truth_pick: (str)
+          when multiple truth objects present, sets which to use, e.g.
+          'bright' chooses the brighter of the two, 'faint' chooses the
+          fainter.
+        Returns
+        -------
+        kl_div: (float)
+           the kl-divergence between the pit histogram and the uniform case
+        '''
+        if not use_latest:
+            if num_truth is None and num_coadd is None and pz_type is None:
+                if hasattr(self,'num_truth') and hasattr(self,'num_coadd') and hasattr(self,'pz_type'):
+                    if truth_pick is None and hasattr(self,'truth_pick'):
+                        truth_pick=self.truth_pick # use the stored one if necessary
+                    self.load_redshifts(num_truth=self.num_truth, num_coadd=self.num_coadd, pz_type=self.pz_type, truth_pick=truth_pick, force_refresh=force_refresh, verbose=verbose)
+                else:
+                    self.load_redshifts(num_truth=1, num_coadd=1, pz_type='z_mode', force_refresh=force_refresh, verbose=verbose)
+            else:
+                self.load_redshifts(num_truth=num_truth, num_coadd=num_coadd, pz_type=pz_type, truth_pick=truth_pick, force_refresh=force_refresh, verbose=verbose)
+
+            # - calculate PIT values
+            self.calc_pits(leave=leave, force_refresh=force_refresh, verbose=verbose)
+
+        bin_edges_optimized = np.histogram_bin_edges(self.PITS, bins='auto')
+        # make the PIT histograms with optimal binning
+        count, bins = np.histogram(self.PITS, bins=bin_edges_optimized)
+        # create a uniform distribution that has the same area as the PIT histogram
+        uniform = (count.sum()/len(count))*np.ones(len(count))
+        kl_div = entropy(count,uniform)
+        return kl_div
+
+        
     def filter(self, cat=None, num_truth=2, num_coadd=1, where=None, apply=None, get=None,
                return_df=None, leave=False, cols=None, inplace=None, dask_scheduler='threads',
                dask_workers=2*multiprocessing.cpu_count(), dask_npartitions=None, verbose=True):
