@@ -1179,7 +1179,7 @@ class PhotozBlend(object):
     def plot_pdf(self, pz_type=None, truth_pick=None, num_truth=None, num_coadd=None, xlim=None, ylim=None, leave=False,
                  verbose=True, fig=None, figsize=None, ax=None, annotate=True, kde_bandwidth='scott', n_iter=10,
                  cv=None, n_jobs=None, force_refresh=False, save_plot=False, plot_dir='output/plots/', use_latest=False,
-                 save_name="pdf-{num_coadd}-{num_truth}{truth_pick}.png", **kernel_kwargs):
+                 save_name="pdf-{num_coadd}-{num_truth}{truth_pick}.png", show_legend=False, **kernel_kwargs):
         """ plot histograms of true and photometric redshifts """
 
         if force_refresh and use_latest:
@@ -1241,7 +1241,8 @@ class PhotozBlend(object):
         ax.ticklabel_format(style="sci", scilimits=(0,0))
         handles, labels = ax.get_legend_handles_labels()
         order = [2,1,0]
-        ax.legend([handles[idx] for idx in order],[labels[idx] for idx in order], fontsize=25);
+        if show_legend:
+            ax.legend([handles[idx] for idx in order],[labels[idx] for idx in order], fontsize=25);
         
         if save_plot:
             util.usedir(plot_dir)
