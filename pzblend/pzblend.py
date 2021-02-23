@@ -1179,7 +1179,7 @@ class PhotozBlend(object):
     def plot_pdf(self, pz_type=None, truth_pick=None, num_truth=None, num_coadd=None, xlim=None, ylim=None, leave=False,
                  verbose=True, fig=None, figsize=None, ax=None, annotate=True, kde_bandwidth='scott', n_iter=10,
                  cv=None, n_jobs=None, force_refresh=False, save_plot=False, plot_dir='output/plots/', use_latest=False,
-                 save_name="pdf-{num_coadd}-{num_truth}{truth_pick}.png", show_legend=False, **kernel_kwargs):
+                 save_name="pdf-{num_coadd}-{num_truth}{truth_pick}.png", show_legend=False, ylabel=None, title=None,**kernel_kwargs):
         """ plot histograms of true and photometric redshifts """
 
         if force_refresh and use_latest:
@@ -1237,12 +1237,13 @@ class PhotozBlend(object):
         ax.axvline(self.pzmean, ls='--', color='C0', lw=1.5, alpha=0.9)
         ax.axvline(self.true_z_mean, ls='--', color='C1', lw=1.5, alpha=0.9)
         ax.set_xlabel('z')
-        ax.set_ylabel('Normalized count')
         ax.ticklabel_format(style="sci", scilimits=(0,0))
         handles, labels = ax.get_legend_handles_labels()
         order = [2,1,0]
         if show_legend:
             ax.legend([handles[idx] for idx in order],[labels[idx] for idx in order], fontsize=25);
+        ax.set_ylabel(ylabel, fontsize=25)
+        ax.set_title(title, fontsize=27)
         
         if save_plot:
             util.usedir(plot_dir)
@@ -1262,7 +1263,8 @@ class PhotozBlend(object):
 
     def plot_pit(self, pz_type=None, truth_pick=None, num_truth=None, num_coadd=None, xlim=None, ylim=None, leave=False, verbose=True,
                  fig=None, figsize=None, ax=None, annotate=True, kde_bandwidth='scott', k_splits=None, cv=None, n_jobs=None, use_latest=False,
-                 force_refresh=False, save_plot=False, plot_dir='output/plots/', save_name='pit-{num_truth}-{num_coadd}{truth_pick}.png', **kernel_kwargs):
+                 force_refresh=False, save_plot=False, plot_dir='output/plots/', save_name='pit-{num_truth}-{num_coadd}{truth_pick}.png',
+                 ylabel=None, title=None, **kernel_kwargs):
         """ plot a histogram of the PIT value """
 
         if force_refresh and use_latest:
@@ -1303,6 +1305,8 @@ class PhotozBlend(object):
         ax.set_ylabel('Normalized count')
         ax.axhline(1.0, ls='--', color='grey', lw=1.5, alpha=0.9);
         ax.ticklabel_format(style='sci', scilimits=(0,0))
+        ax.set_ylabel(ylabel)
+        ax.set_title(title, fontsize=27)
 
         if save_plot:
             util.usedir(plot_dir)
